@@ -44,7 +44,7 @@ class SessionSplittingUtilities:
     # FORMAT READING / VALIDATION
     # ====================================================================================================
     @staticmethod
-    def read_wav_format(self, path: Path) -> dict:
+    def read_wav_format(path: Path) -> dict:
         with wave.open(str(path), 'rb') as wav:
             return {
                 "channels": wav.getnchannels(),
@@ -54,7 +54,7 @@ class SessionSplittingUtilities:
             }
 
     @staticmethod
-    def check_format_continuity(self, reference: dict, candidate: dict, path: Path):
+    def check_format_continuity(reference: dict, candidate: dict, path: Path):
         mismatches = []
         for key in ("channels", "sample_width", "framerate"):
             if reference[key] != candidate[key]:
