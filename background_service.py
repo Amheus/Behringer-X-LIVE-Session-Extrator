@@ -82,7 +82,7 @@ def main() -> None:
         description="Process multi-track recordings under a root directory."
     )
     parser.add_argument(
-        "root-directory",
+        "--root-directory",
         help="Path to the multi-track recordings root directory",
     )
     args = parser.parse_args()
