@@ -1,3 +1,4 @@
+import argparse
 import io
 import json
 import os
@@ -7,8 +8,6 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from common.session_splitting_utilities import SessionSplittingUtilities
-
-ROOT_DIRECTORY = "Z:\\Multi Track Recordings"
 
 CHANNEL_MAP_FILENAME = "channel-map.json"
 
@@ -20,23 +19,23 @@ FAILED_SUFFIX = ".failed"
 MAX_WORKERS: int | None = 10
 
 
-def get_bands() -> list[str]:
-    return [e.name for e in os.scandir(ROOT_DIRECTORY) if e.is_dir()]
+def get_bands(root_directory: str) -> list[str]:
+    return [e.name for e in os.scandir(root_directory) if e.is_dir()]
 
 
-def get_todos_for_band(band_name: str) -> list[str]:
-    path = f"{ROOT_DIRECTORY}/{band_name}/_raw"
+def get_todos_for_band(root_directory: str, band_name: str) -> list[str]:
+    path = f"{root_directory}/{band_name}/_raw"
     if not os.path.isdir(path):
         return []
     return [e.name for e in os.scandir(path) if e.is_dir() and e.name.endswith(TODO_SUFFIX)]
 
 
-def get_tracks_for_raw(band_name: str, raw_name: str) -> list[str]:
-    return [e.name for e in os.scandir(f"{ROOT_DIRECTORY}/{band_name}/_raw/{raw_name}") if e.is_dir()]
+def get_tracks_for_raw(root_directory: str, band_name: str, raw_name: str) -> list[str]:
+    return [e.name for e in os.scandir(f"{root_directory}/{band_name}/_raw/{raw_name}") if e.is_dir()]
 
 
-def load_channel_map(band_name: str, raw_name: str) -> list[str | None] | None:
-    path = f"{ROOT_DIRECTORY}/{band_name}/_raw/{raw_name}/{CHANNEL_MAP_FILENAME}"
+def load_channel_map(root_directory: str, band_name: str, raw_name: str) -> list[str | None] | None:
+    path = f"{root_directory}/{band_name}/_raw/{raw_name}/{CHANNEL_MAP_FILENAME}"
     if not os.path.isfile(path):
         return None
     with open(path, encoding="utf-8") as f:
@@ -46,8 +45,8 @@ def load_channel_map(band_name: str, raw_name: str) -> list[str | None] | None:
     return data
 
 
-def claim_raw(band_name: str, todo_name: str) -> tuple[str, str] | None:
-    raw_dir = Path(ROOT_DIRECTORY) / band_name / "_raw"
+def claim_raw(root_directory: str, band_name: str, todo_name: str) -> tuple[str, str] | None:
+    raw_dir = Path(root_directory) / band_name / "_raw"
     base = todo_name[:-len(TODO_SUFFIX)]
     inprog_name = base + INPROG_SUFFIX
     try:
@@ -57,8 +56,8 @@ def claim_raw(band_name: str, todo_name: str) -> tuple[str, str] | None:
     return inprog_name, base
 
 
-def finalise_raw(band_name: str, inprog_name: str, base: str, success: bool) -> None:
-    raw_dir = Path(ROOT_DIRECTORY) / band_name / "_raw"
+def finalise_raw(root_directory: str, band_name: str, inprog_name: str, base: str, success: bool) -> None:
+    raw_dir = Path(root_directory) / band_name / "_raw"
     final_suffix = DONE_SUFFIX if success else FAILED_SUFFIX
     final_name = base + final_suffix
     try:
@@ -79,29 +78,39 @@ def run_one(ssu: SessionSplittingUtilities) -> tuple[str, bool, str, str | None]
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Process multi-track recordings under a root directory."
+    )
+    parser.add_argument(
+        "root-directory",
+        help="Path to the multi-track recordings root directory",
+    )
+    args = parser.parse_args()
+    root_directory = args.root_directory
+
     # one entry per claimed session: tracks the SSUs to run and a failure counter
     raw_groups: list[dict] = []
 
-    for band_name in get_bands():
-        for todo_name in get_todos_for_band(band_name):
-            claimed = claim_raw(band_name, todo_name)
+    for band_name in get_bands(root_directory):
+        for todo_name in get_todos_for_band(root_directory, band_name):
+            claimed = claim_raw(root_directory, band_name, todo_name)
             if claimed is None:
                 # another run beat us to it, or transient FS issue - skip
                 continue
             inprog_name, base = claimed
 
             try:
-                channel_map = load_channel_map(band_name, inprog_name)
+                channel_map = load_channel_map(root_directory, band_name, inprog_name)
             except (ValueError, json.JSONDecodeError) as e:
                 print(f"WARNING: malformed channel map in {band_name}/{inprog_name}: {e}", file=sys.stderr)
-                finalise_raw(band_name, inprog_name, base, success=False)
+                finalise_raw(root_directory, band_name, inprog_name, base, success=False)
                 continue
 
             group_ssus: list[SessionSplittingUtilities] = []
-            for track_name in get_tracks_for_raw(band_name, inprog_name):
+            for track_name in get_tracks_for_raw(root_directory, band_name, inprog_name):
                 group_ssus.append(SessionSplittingUtilities(
-                    input_directory_path=f"{ROOT_DIRECTORY}/{band_name}/_raw/{inprog_name}/{track_name}",
-                    output_directory_path=f"{ROOT_DIRECTORY}/{band_name}/{base}/{track_name}",
+                    input_directory_path=f"{root_directory}/{band_name}/_raw/{inprog_name}/{track_name}",
+                    output_directory_path=f"{root_directory}/{band_name}/{base}/{track_name}",
                     channel_names=channel_map,
                 ))
 
@@ -159,7 +168,7 @@ def main() -> None:
         all_ok = g["failures"] == 0
         status = "OK" if all_ok else f"{g['failures']} failure(s)"
         print(f"  {g['band']}/{g['base']}: {status}")
-        finalise_raw(g["band"], g["inprog_name"], g["base"], success=all_ok)
+        finalise_raw(root_directory, g["band"], g["inprog_name"], g["base"], success=all_ok)
 
     print(sep)
     if failures:
